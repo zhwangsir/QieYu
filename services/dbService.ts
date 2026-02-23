@@ -16,7 +16,8 @@ const getAuthHeaders = () => {
 const handleResponse = async (res: Response) => {
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: res.statusText }));
-    throw new Error(err.message || 'Request failed');
+    console.error('API Error:', res.status, err);
+    throw new Error(err.message || err.sqlMessage || 'Request failed');
   }
   // 处理 204 No Content 响应
   if (res.status === 204 || res.headers.get('content-length') === '0') {
@@ -36,10 +37,10 @@ export const registerUser = async (username: string, password: string): Promise<
   const data = await fetch(`${API_URL}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password })
+    body: JSON.stringify({ username, password, confirmPassword: password })
   }).then(handleResponse);
   
-  localStorage.setItem('access_token', data.access);
+  localStorage.setItem('access_token', data.token || data.access);
   return getUserProfile();
 };
 
@@ -50,7 +51,7 @@ export const loginUser = async (username: string, password: string): Promise<Use
     body: JSON.stringify({ username, password })
   }).then(handleResponse);
   
-  localStorage.setItem('access_token', data.access);
+  localStorage.setItem('access_token', data.token || data.access);
   return getUserProfile();
 };
 
@@ -163,7 +164,7 @@ export const getAllEntries = async (targetUserId?: string): Promise<LogEntry[]> 
   const url = new URL(`${API_URL}/entries`);
   if (targetUserId) url.searchParams.append('user', targetUserId);
   const data = await fetch(url.toString(), { headers: getAuthHeaders() }).then(handleResponse);
-  return data.results;
+  return data.data?.list || data.list || data.results || data;
 };
 
 /**
@@ -414,6 +415,35 @@ export const adminDeleteAnnouncement = async (id: string) => {
 };
 
 // New Admin Functions
+export const adminGetStats = async () => {
+    return fetch(`${API_URL}/admin/stats`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+export const adminGetStatistics = async () => {
+    return fetch(`${API_URL}/admin/statistics`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+export const adminGetUsers = async (params?: { page?: number; pageSize?: number; search?: string; status?: string; role?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.page) query.append('page', params.page.toString());
+    if (params?.pageSize) query.append('pageSize', params.pageSize.toString());
+    if (params?.search) query.append('search', params.search);
+    if (params?.status) query.append('status', params.status);
+    if (params?.role) query.append('role', params.role);
+    const queryString = query.toString();
+    return fetch(`${API_URL}/admin/users${queryString ? `?${queryString}` : ''}`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+export const adminGetAudit = async (params?: { page?: number; pageSize?: number; module?: string; action?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.page) query.append('page', params.page.toString());
+    if (params?.pageSize) query.append('pageSize', params.pageSize.toString());
+    if (params?.module) query.append('module', params.module);
+    if (params?.action) query.append('action', params.action);
+    const queryString = query.toString();
+    return fetch(`${API_URL}/admin/audit${queryString ? `?${queryString}` : ''}`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
 export const adminGetChats = async () => {
     return fetch(`${API_URL}/admin/chats`, { headers: getAuthHeaders() }).then(handleResponse);
 };
@@ -424,6 +454,226 @@ export const adminDeleteChat = async (id: string) => {
 
 export const adminGetFiles = async () => {
     return fetch(`${API_URL}/admin/files`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+export const adminGetOnlineUsers = async () => {
+    return fetch(`${API_URL}/admin/online-users`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+export const adminForceLogout = async (userId: string) => {
+    return fetch(`${API_URL}/admin/users/${userId}/force-logout`, {
+        method: 'POST',
+        headers: getAuthHeaders()
+    }).then(handleResponse);
+};
+
+export const adminGetServerStatus = async () => {
+    return fetch(`${API_URL}/admin/server/status`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+// --- Notifications (Additional Functions) ---
+
+export const markNotificationAsRead = async (notificationId: string): Promise<void> => {
+  await fetch(`${API_URL}/notifications/${notificationId}/read`, {
+    method: 'POST',
+    headers: getAuthHeaders()
+  }).then(handleResponse);
+};
+
+export const markAllNotificationsAsRead = async (userId: string): Promise<void> => {
+  await fetch(`${API_URL}/notifications/read-all?userId=${userId}`, {
+    method: 'POST',
+    headers: getAuthHeaders()
+  }).then(handleResponse);
+};
+
+export const deleteNotification = async (notificationId: string): Promise<void> => {
+  await fetch(`${API_URL}/notifications/${notificationId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders()
+  }).then(handleResponse);
+};
+
+// --- Friend Requests ---
+
+export const getFriendRequests = async (userId: string): Promise<any[]> => {
+  return fetch(`${API_URL}/friends/requests?userId=${userId}`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+export const respondToFriendRequest = async (requestId: string, accept: boolean): Promise<void> => {
+  await fetch(`${API_URL}/friends/requests/${requestId}/respond`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ accept })
+  }).then(handleResponse);
+};
+
+// --- Announcements ---
+
+export const getAnnouncements = async (): Promise<Announcement[]> => {
+  return fetch(`${API_URL}/announcements`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+// ================= 新增：角色权限管理 API =================
+
+export const adminGetRoles = async () => {
+  return fetch(`${API_URL}/admin/roles`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+export const adminCreateRole = async (data: { name: string; code: string; description?: string }) => {
+  return fetch(`${API_URL}/admin/roles`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data)
+  }).then(handleResponse);
+};
+
+export const adminUpdateRole = async (id: string, data: any) => {
+  return fetch(`${API_URL}/admin/roles/${id}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data)
+  }).then(handleResponse);
+};
+
+export const adminDeleteRole = async (id: string) => {
+  return fetch(`${API_URL}/admin/roles/${id}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders()
+  }).then(handleResponse);
+};
+
+export const adminGetPermissions = async () => {
+  return fetch(`${API_URL}/admin/permissions`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+export const adminAssignRolePermissions = async (roleId: string, permissionIds: string[]) => {
+  return fetch(`${API_URL}/admin/roles/${roleId}/permissions`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ permissionIds })
+  }).then(handleResponse);
+};
+
+export const adminGetRolePermissions = async (roleId: string) => {
+  return fetch(`${API_URL}/admin/roles/${roleId}/permissions`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+// ================= 新增：系统配置管理 API =================
+
+export const adminGetConfigs = async () => {
+  return fetch(`${API_URL}/admin/configs`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+export const adminCreateConfig = async (data: { key: string; value: string; type?: string; description?: string }) => {
+  return fetch(`${API_URL}/admin/configs`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data)
+  }).then(handleResponse);
+};
+
+export const adminUpdateConfig = async (id: string, data: any) => {
+  return fetch(`${API_URL}/admin/configs/${id}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data)
+  }).then(handleResponse);
+};
+
+export const adminDeleteConfig = async (id: string) => {
+  return fetch(`${API_URL}/admin/configs/${id}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders()
+  }).then(handleResponse);
+};
+
+// ================= 新增：字典管理 API =================
+
+export const adminGetDictTypes = async () => {
+  return fetch(`${API_URL}/admin/dict-types`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+export const adminCreateDictType = async (data: { name: string; type: string; description?: string }) => {
+  return fetch(`${API_URL}/admin/dict-types`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data)
+  }).then(handleResponse);
+};
+
+export const adminGetDictData = async (type?: string) => {
+  const url = type ? `${API_URL}/admin/dict-data?type=${type}` : `${API_URL}/admin/dict-data`;
+  return fetch(url, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+export const adminCreateDictData = async (data: { dictType: string; label: string; value: string; sort?: number; remark?: string }) => {
+  return fetch(`${API_URL}/admin/dict-data`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data)
+  }).then(handleResponse);
+};
+
+// ================= 新增：定时任务管理 API =================
+
+export const adminGetJobs = async () => {
+  return fetch(`${API_URL}/admin/jobs`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+export const adminCreateJob = async (data: { name: string; group?: string; cron: string; target: string; concurrent?: boolean; description?: string }) => {
+  return fetch(`${API_URL}/admin/jobs`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data)
+  }).then(handleResponse);
+};
+
+export const adminUpdateJob = async (id: string, data: any) => {
+  return fetch(`${API_URL}/admin/jobs/${id}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data)
+  }).then(handleResponse);
+};
+
+export const adminDeleteJob = async (id: string) => {
+  return fetch(`${API_URL}/admin/jobs/${id}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders()
+  }).then(handleResponse);
+};
+
+export const adminRunJob = async (id: string) => {
+  return fetch(`${API_URL}/admin/jobs/${id}/run`, {
+    method: 'POST',
+    headers: getAuthHeaders()
+  }).then(handleResponse);
+};
+
+export const adminGetJobLogs = async (id: string) => {
+  return fetch(`${API_URL}/admin/jobs/${id}/logs`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+// ================= 新增：数据备份管理 API =================
+
+export const adminGetBackups = async () => {
+  return fetch(`${API_URL}/admin/backups`, { headers: getAuthHeaders() }).then(handleResponse);
+};
+
+export const adminCreateBackup = async (data: { name: string; type?: string; description?: string }) => {
+  return fetch(`${API_URL}/admin/backups`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data)
+  }).then(handleResponse);
+};
+
+export const adminDeleteBackup = async (id: string) => {
+  return fetch(`${API_URL}/admin/backups/${id}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders()
+  }).then(handleResponse);
 };
 
 // Utils

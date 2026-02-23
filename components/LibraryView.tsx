@@ -14,8 +14,8 @@ interface LibraryViewProps {
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onLikeToggle: (id: string) => void;
-  categories: string[]; 
-  onManageCategories: () => void;
+  categories: string[];
+  onManageCategories: (logType?: LogType) => void;
   onViewUser: (userId: string) => void;
 }
 
@@ -45,7 +45,13 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     const loadCats = async () => {
         if (selectedLogType) {
           const cats = await dbService.getCategories(selectedLogType);
-          setTypeSpecificCategories(cats.filter(c => c !== '未分类')); 
+          // 如果没有自定义分类，使用默认分类
+          if (cats.length <= 1) { // 只有"未分类"
+            const defaultCats = LOG_TYPES[selectedLogType]?.defaultCategories || [];
+            setTypeSpecificCategories(defaultCats);
+          } else {
+            setTypeSpecificCategories(cats.filter(c => c !== '未分类'));
+          }
         } else {
           setTypeSpecificCategories([]);
         }
@@ -137,8 +143,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                 <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400 pointer-events-none" />
               </div>
 
-              <button 
-                onClick={onManageCategories}
+              <button
+                onClick={() => onManageCategories(selectedLogType || undefined)}
                 className="flex items-center gap-2 px-3 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white rounded-xl transition-all border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm whitespace-nowrap transition-colors"
                 title="管理分类"
               >
@@ -156,13 +162,13 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             {selectedLogType === null ? (
               // Mode: Show All Types
               <>
-                 <button 
+                 <button
                     className="px-4 py-2 rounded-xl text-sm font-bold bg-primary-500 text-white shadow-md transform scale-105 transition-all"
                   >
                     全部类型
                   </button>
                   <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-2" />
-                  
+
                   {(Object.keys(LOG_TYPES) as LogType[]).map(type => {
                       const config = LOG_TYPES[type];
                       const Icon = config.icon;
@@ -177,6 +183,17 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                         </button>
                       )
                   })}
+
+                  {/* 管理分类按钮 - 在全部类型模式下也显示 */}
+                  <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-2" />
+                  <button
+                    onClick={() => onManageCategories(undefined)}
+                    className="px-3 py-2 rounded-xl text-xs font-medium bg-slate-100 dark:bg-slate-800 border border-dashed border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400 hover:text-primary-500 dark:hover:text-primary-400 hover:border-primary-300 dark:hover:border-primary-600 flex items-center gap-1.5 transition-all"
+                    title="管理分类"
+                  >
+                    <Settings size={12} />
+                    管理
+                  </button>
               </>
             ) : (
               // Mode: Drill Down (Type Selected)
@@ -200,9 +217,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                         const Icon = config.icon;
                         return <><Icon size={16} className={config.color} /> {config.label}</>;
                      })()}
-                     <span 
-                       onClick={(e) => { e.stopPropagation(); setSelectedLogType(null); setSelectedCategory(null); }}
+                     <span
+                       onClick={(e) => { e.stopPropagation(); setSelectedLogType(null); }}
                        className="p-1 hover:bg-black/5 dark:hover:bg-white/10 rounded-full ml-1 transition-colors"
+                       title="返回全部类型"
                      >
                        <X size={12} className="text-slate-400 group-hover:text-slate-600 dark:group-hover:text-white" />
                      </span>
@@ -223,15 +241,25 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                       key={cat}
                       onClick={() => setSelectedCategory(cat === selectedCategory ? null : cat)}
                       className={`px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
-                        cat === selectedCategory 
-                        ? 'bg-primary-500 border-primary-400 text-white shadow-md' 
+                        cat === selectedCategory
+                        ? 'bg-primary-500 border-primary-400 text-white shadow-md'
                         : 'bg-white dark:bg-[#161b22] border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:border-slate-300 dark:hover:border-slate-600'
                       } transition-colors`}
                     >
                       {cat}
                     </button>
                   ))}
-                  
+
+                  {/* 管理分类按钮 */}
+                  <button
+                    onClick={() => onManageCategories(selectedLogType || undefined)}
+                    className="px-3 py-2 rounded-xl text-xs font-medium bg-slate-100 dark:bg-slate-800 border border-dashed border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400 hover:text-primary-500 dark:hover:text-primary-400 hover:border-primary-300 dark:hover:border-primary-600 flex items-center gap-1.5 transition-all"
+                    title="管理分类"
+                  >
+                    <Settings size={12} />
+                    管理
+                  </button>
+
                   {typeSpecificCategories.length === 0 && (
                      <span className="text-[10px] text-slate-500 dark:text-slate-600 italic pl-2">无子分类</span>
                   )}

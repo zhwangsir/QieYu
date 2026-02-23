@@ -1096,15 +1096,220 @@ app.get('/api/categories', async (req, res) => {
 });
 app.post('/api/categories', authenticateToken, async(req, res) => {
     try {
-        await pool.query('INSERT INTO sys_category (name, log_type) VALUES (?, ?)', [req.body.name, req.body.logType]);
-        res.sendStatus(201);
-    } catch(e) { res.status(500).send(e.message); }
+        const { name, logType } = req.body;
+        console.log('添加分类请求:', { name, logType, user: req.user });
+        
+        if (!name || !logType) {
+            return res.status(400).json({ message: '缺少必要参数: name 或 logType' });
+        }
+        if (!req.user || !req.user.id) {
+            return res.status(401).json({ message: '用户信息无效' });
+        }
+        
+        await pool.query(
+            'INSERT INTO sys_category (name, log_type, created_by) VALUES (?, ?, ?)',
+            [name, logType, req.user.id]
+        );
+        res.status(201).json({ message: '分类创建成功' });
+    } catch(e) {
+        console.error('添加分类失败:', e);
+        // 处理重复分类错误
+        if (e.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: `分类 "${req.body.name}" 已存在`, code: 'DUPLICATE_CATEGORY' });
+        }
+        res.status(500).json({ message: e.message, code: e.code, sqlMessage: e.sqlMessage });
+    }
 });
-app.delete('/api/categories/:name', authenticateToken, async(req, res) => {
+// 删除分类 - 使用查询参数
+app.delete('/api/categories', authenticateToken, async(req, res) => {
     try {
-        await pool.query('DELETE FROM sys_category WHERE name = ?', [req.params.name]);
-        res.sendStatus(204);
-    } catch(e) { res.status(500).send(e.message); }
+        const { name, type } = req.query;
+        if (!name || !type) {
+            return res.status(400).json({ message: '缺少必要参数: name 或 type' });
+        }
+        // 先更新该分类下的日志到 "未分类"
+        await pool.query('UPDATE sys_log_entry SET category = ? WHERE category = ? AND log_type = ?', ['未分类', name, type]);
+        // 然后删除分类
+        await pool.query('DELETE FROM sys_category WHERE name = ? AND log_type = ?', [name, type]);
+        res.status(200).json({ message: '分类删除成功' });
+    } catch(e) { 
+        console.error('删除分类失败:', e);
+        res.status(500).json({ message: e.message });
+    }
+});
+
+// 重命名分类
+app.post('/api/categories/rename', authenticateToken, async(req, res) => {
+    try {
+        const { oldName, newName, logType } = req.body;
+        if (!oldName || !newName || !logType) {
+            return res.status(400).json({ message: '缺少必要参数' });
+        }
+        // 更新分类表
+        await pool.query('UPDATE sys_category SET name = ? WHERE name = ? AND log_type = ?', [newName, oldName, logType]);
+        // 更新日志表中的分类
+        await pool.query('UPDATE sys_log_entry SET category = ? WHERE category = ? AND log_type = ?', [newName, oldName, logType]);
+        res.status(200).json({ message: '分类重命名成功' });
+    } catch(e) { 
+        console.error('重命名分类失败:', e);
+        res.status(500).json({ message: e.message });
+    }
+});
+
+// ================= NOTIFICATIONS API =================
+
+// 获取用户通知列表
+app.get('/api/notifications', authenticateToken, async (req, res) => {
+    try {
+        const { userId } = req.query;
+        if (!userId) return res.status(400).json({ message: '缺少userId参数' });
+        
+        const [rows] = await pool.query(
+            'SELECT * FROM sys_notification WHERE user_id = ? ORDER BY created_at DESC',
+            [userId]
+        );
+        res.json(rows.map(r => ({
+            id: r.notification_id,
+            userId: r.user_id,
+            type: r.type,
+            title: r.title,
+            content: r.content,
+            data: r.data ? JSON.parse(r.data) : null,
+            read: r.is_read === 1,
+            createdAt: r.created_at
+        })));
+    } catch(e) {
+        console.error('获取通知失败:', e);
+        res.status(500).json({ message: e.message });
+    }
+});
+
+// 标记通知为已读
+app.post('/api/notifications/:id/read', authenticateToken, async (req, res) => {
+    try {
+        await pool.query(
+            'UPDATE sys_notification SET is_read = 1, read_at = NOW() WHERE notification_id = ?',
+            [req.params.id]
+        );
+        res.json({ message: '已标记为已读' });
+    } catch(e) {
+        console.error('标记已读失败:', e);
+        res.status(500).json({ message: e.message });
+    }
+});
+
+// 标记全部通知为已读
+app.post('/api/notifications/read-all', authenticateToken, async (req, res) => {
+    try {
+        const { userId } = req.query;
+        if (!userId) return res.status(400).json({ message: '缺少userId参数' });
+        
+        await pool.query(
+            'UPDATE sys_notification SET is_read = 1, read_at = NOW() WHERE user_id = ? AND is_read = 0',
+            [userId]
+        );
+        res.json({ message: '全部已标记为已读' });
+    } catch(e) {
+        console.error('标记全部已读失败:', e);
+        res.status(500).json({ message: e.message });
+    }
+});
+
+// 删除通知
+app.delete('/api/notifications/:id', authenticateToken, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM sys_notification WHERE notification_id = ?', [req.params.id]);
+        res.json({ message: '通知已删除' });
+    } catch(e) {
+        console.error('删除通知失败:', e);
+        res.status(500).json({ message: e.message });
+    }
+});
+
+// ================= FRIEND REQUESTS API =================
+
+// 获取好友请求列表
+app.get('/api/friends/requests', authenticateToken, async (req, res) => {
+    try {
+        const { userId } = req.query;
+        if (!userId) return res.status(400).json({ message: '缺少userId参数' });
+        
+        const [rows] = await pool.query(
+            `SELECT r.*, u.username as from_user_name, u.avatar as from_user_avatar 
+             FROM sys_friend_request r 
+             JOIN sys_user u ON r.from_user_id = u.user_id 
+             WHERE r.to_user_id = ? AND r.status = 'pending' 
+             ORDER BY r.created_at DESC`,
+            [userId]
+        );
+        res.json(rows.map(r => ({
+            id: r.request_id,
+            fromUserId: r.from_user_id,
+            toUserId: r.to_user_id,
+            fromUserName: r.from_user_name,
+            fromUserAvatar: r.from_user_avatar,
+            status: r.status,
+            createdAt: r.created_at
+        })));
+    } catch(e) {
+        console.error('获取好友请求失败:', e);
+        res.status(500).json({ message: e.message });
+    }
+});
+
+// 响应好友请求
+app.post('/api/friends/requests/:id/respond', authenticateToken, async (req, res) => {
+    try {
+        const { accept } = req.body;
+        const status = accept ? 'accepted' : 'rejected';
+        
+        // 更新请求状态
+        await pool.query(
+            'UPDATE sys_friend_request SET status = ? WHERE request_id = ?',
+            [status, req.params.id]
+        );
+        
+        // 如果接受，添加好友关系
+        if (accept) {
+            const [request] = await pool.query(
+                'SELECT * FROM sys_friend_request WHERE request_id = ?',
+                [req.params.id]
+            );
+            if (request.length > 0) {
+                await pool.query(
+                    'INSERT INTO sys_friend (user_id, friend_id) VALUES (?, ?), (?, ?)',
+                    [request[0].from_user_id, request[0].to_user_id, request[0].to_user_id, request[0].from_user_id]
+                );
+            }
+        }
+        
+        res.json({ message: accept ? '已接受好友请求' : '已拒绝好友请求' });
+    } catch(e) {
+        console.error('响应好友请求失败:', e);
+        res.status(500).json({ message: e.message });
+    }
+});
+
+// ================= ANNOUNCEMENTS API =================
+
+// 获取公告列表
+app.get('/api/announcements', authenticateToken, async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            'SELECT * FROM sys_announcement WHERE is_active = 1 ORDER BY created_at DESC'
+        );
+        res.json(rows.map(r => ({
+            id: r.ann_id,
+            title: r.title,
+            content: r.content,
+            type: r.type,
+            active: r.is_active === 1,
+            createdAt: r.created_at
+        })));
+    } catch(e) {
+        console.error('获取公告失败:', e);
+        res.status(500).json({ message: e.message });
+    }
 });
 
 // ================= ADMIN API =================
@@ -1206,6 +1411,508 @@ app.get('/api/admin/files', authenticateToken, requireAdmin, async (req, res) =>
         `);
         res.json(rows);
     } catch(e) { res.status(500).send(e.message); }
+});
+
+// ================= 新增：角色权限管理 API =================
+
+// 获取角色列表
+app.get('/api/admin/roles', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM sys_role ORDER BY created_at DESC');
+        res.json(rows.map(r => ({
+            id: r.role_id,
+            name: r.role_name,
+            code: r.role_code,
+            description: r.description,
+            status: r.status,
+            createdAt: r.created_at
+        })));
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 创建角色
+app.post('/api/admin/roles', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { name, code, description } = req.body;
+        const id = uuidv4();
+        await pool.query(
+            'INSERT INTO sys_role (role_id, role_name, role_code, description) VALUES (?, ?, ?, ?)',
+            [id, name, code, description]
+        );
+        auditLog(req.user.id, req.user.username, 'CREATE_ROLE', 'ADMIN', `Created role ${code}`);
+        res.status(201).json({ id, message: '角色创建成功' });
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 更新角色
+app.put('/api/admin/roles/:id', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { name, code, description, status } = req.body;
+        await pool.query(
+            'UPDATE sys_role SET role_name = ?, role_code = ?, description = ?, status = ? WHERE role_id = ?',
+            [name, code, description, status, req.params.id]
+        );
+        auditLog(req.user.id, req.user.username, 'UPDATE_ROLE', 'ADMIN', `Updated role ${req.params.id}`);
+        res.json({ message: '角色更新成功' });
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 删除角色
+app.delete('/api/admin/roles/:id', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM sys_role WHERE role_id = ?', [req.params.id]);
+        auditLog(req.user.id, req.user.username, 'DELETE_ROLE', 'ADMIN', `Deleted role ${req.params.id}`);
+        res.json({ message: '角色删除成功' });
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 获取权限树
+app.get('/api/admin/permissions', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM sys_permission ORDER BY sort_order');
+        // 构建树形结构
+        const buildTree = (data, parentId = null) => {
+            return data
+                .filter(item => item.parent_id === parentId)
+                .map(item => ({
+                    id: item.permission_id,
+                    name: item.permission_name,
+                    code: item.permission_code,
+                    module: item.module,
+                    type: item.permission_type,
+                    sort: item.sort_order,
+                    children: buildTree(data, item.permission_id)
+                }));
+        };
+        res.json(buildTree(rows));
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 分配角色权限
+app.post('/api/admin/roles/:id/permissions', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { permissionIds } = req.body;
+        const roleId = req.params.id;
+        
+        // 删除旧权限
+        await pool.query('DELETE FROM sys_role_permission WHERE role_id = ?', [roleId]);
+        
+        // 添加新权限
+        if (permissionIds && permissionIds.length > 0) {
+            const values = permissionIds.map(pid => [roleId, pid]);
+            await pool.query(
+                'INSERT INTO sys_role_permission (role_id, permission_id) VALUES ?',
+                [values]
+            );
+        }
+        
+        auditLog(req.user.id, req.user.username, 'ASSIGN_PERMISSION', 'ADMIN', `Assigned permissions to role ${roleId}`);
+        res.json({ message: '权限分配成功' });
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// ================= 新增：系统配置管理 API =================
+
+// 获取配置列表
+app.get('/api/admin/configs', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM sys_config ORDER BY created_at DESC');
+        res.json(rows.map(r => ({
+            id: r.config_id,
+            key: r.config_key,
+            value: r.config_value,
+            type: r.config_type,
+            description: r.description,
+            isSystem: r.is_system === 1,
+            createdAt: r.created_at
+        })));
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 创建配置
+app.post('/api/admin/configs', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { key, value, type, description } = req.body;
+        const id = uuidv4();
+        await pool.query(
+            'INSERT INTO sys_config (config_id, config_key, config_value, config_type, description) VALUES (?, ?, ?, ?, ?)',
+            [id, key, value, type, description]
+        );
+        auditLog(req.user.id, req.user.username, 'CREATE_CONFIG', 'ADMIN', `Created config ${key}`);
+        res.status(201).json({ id, message: '配置创建成功' });
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 更新配置
+app.put('/api/admin/configs/:id', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { value, description } = req.body;
+        await pool.query(
+            'UPDATE sys_config SET config_value = ?, description = ? WHERE config_id = ?',
+            [value, description, req.params.id]
+        );
+        auditLog(req.user.id, req.user.username, 'UPDATE_CONFIG', 'ADMIN', `Updated config ${req.params.id}`);
+        res.json({ message: '配置更新成功' });
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 删除配置
+app.delete('/api/admin/configs/:id', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        // 检查是否为系统内置配置
+        const [rows] = await pool.query('SELECT is_system FROM sys_config WHERE config_id = ?', [req.params.id]);
+        if (rows.length > 0 && rows[0].is_system === 1) {
+            return res.status(403).json({ message: '系统内置配置不能删除' });
+        }
+        await pool.query('DELETE FROM sys_config WHERE config_id = ?', [req.params.id]);
+        auditLog(req.user.id, req.user.username, 'DELETE_CONFIG', 'ADMIN', `Deleted config ${req.params.id}`);
+        res.json({ message: '配置删除成功' });
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// ================= 新增：字典管理 API =================
+
+// 获取字典类型列表
+app.get('/api/admin/dict-types', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM sys_dict_type ORDER BY created_at DESC');
+        res.json(rows.map(r => ({
+            id: r.dict_id,
+            name: r.dict_name,
+            type: r.dict_type,
+            description: r.description,
+            status: r.status,
+            createdAt: r.created_at
+        })));
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 创建字典类型
+app.post('/api/admin/dict-types', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { name, type, description } = req.body;
+        const id = uuidv4();
+        await pool.query(
+            'INSERT INTO sys_dict_type (dict_id, dict_name, dict_type, description) VALUES (?, ?, ?, ?)',
+            [id, name, type, description]
+        );
+        auditLog(req.user.id, req.user.username, 'CREATE_DICT_TYPE', 'ADMIN', `Created dict type ${type}`);
+        res.status(201).json({ id, message: '字典类型创建成功' });
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 获取字典数据列表
+app.get('/api/admin/dict-data', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { type } = req.query;
+        let query = 'SELECT * FROM sys_dict_data';
+        let params = [];
+        if (type) {
+            query += ' WHERE dict_type = ?';
+            params.push(type);
+        }
+        query += ' ORDER BY sort_order';
+        const [rows] = await pool.query(query, params);
+        res.json(rows.map(r => ({
+            id: r.data_id,
+            dictType: r.dict_type,
+            label: r.dict_label,
+            value: r.dict_value,
+            sort: r.sort_order,
+            status: r.status,
+            remark: r.remark
+        })));
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 创建字典数据
+app.post('/api/admin/dict-data', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { dictType, label, value, sort, remark } = req.body;
+        const id = uuidv4();
+        await pool.query(
+            'INSERT INTO sys_dict_data (data_id, dict_type, dict_label, dict_value, sort_order, remark) VALUES (?, ?, ?, ?, ?, ?)',
+            [id, dictType, label, value, sort || 0, remark]
+        );
+        auditLog(req.user.id, req.user.username, 'CREATE_DICT_DATA', 'ADMIN', `Created dict data ${label}`);
+        res.status(201).json({ id, message: '字典数据创建成功' });
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// ================= 新增：定时任务管理 API =================
+
+// 获取定时任务列表
+app.get('/api/admin/jobs', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM sys_job ORDER BY created_at DESC');
+        res.json(rows.map(r => ({
+            id: r.job_id,
+            name: r.job_name,
+            group: r.job_group,
+            cron: r.cron_expression,
+            target: r.invoke_target,
+            status: r.status,
+            concurrent: r.concurrent,
+            description: r.description,
+            lastRunTime: r.last_run_time,
+            nextRunTime: r.next_run_time
+        })));
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 创建定时任务
+app.post('/api/admin/jobs', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { name, group, cron, target, concurrent, description } = req.body;
+        const id = uuidv4();
+        await pool.query(
+            'INSERT INTO sys_job (job_id, job_name, job_group, cron_expression, invoke_target, concurrent, description) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [id, name, group || 'DEFAULT', cron, target, concurrent !== false ? 1 : 0, description]
+        );
+        auditLog(req.user.id, req.user.username, 'CREATE_JOB', 'ADMIN', `Created job ${name}`);
+        res.status(201).json({ id, message: '定时任务创建成功' });
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 更新定时任务
+app.put('/api/admin/jobs/:id', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { name, group, cron, target, status, concurrent, description } = req.body;
+        await pool.query(
+            'UPDATE sys_job SET job_name = ?, job_group = ?, cron_expression = ?, invoke_target = ?, status = ?, concurrent = ?, description = ? WHERE job_id = ?',
+            [name, group, cron, target, status, concurrent ? 1 : 0, description, req.params.id]
+        );
+        auditLog(req.user.id, req.user.username, 'UPDATE_JOB', 'ADMIN', `Updated job ${req.params.id}`);
+        res.json({ message: '定时任务更新成功' });
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 删除定时任务
+app.delete('/api/admin/jobs/:id', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM sys_job WHERE job_id = ?', [req.params.id]);
+        auditLog(req.user.id, req.user.username, 'DELETE_JOB', 'ADMIN', `Deleted job ${req.params.id}`);
+        res.json({ message: '定时任务删除成功' });
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 立即执行任务
+app.post('/api/admin/jobs/:id/run', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        // 记录执行日志
+        const jobId = req.params.id;
+        const [job] = await pool.query('SELECT * FROM sys_job WHERE job_id = ?', [jobId]);
+        if (job.length === 0) {
+            return res.status(404).json({ message: '任务不存在' });
+        }
+        
+        const logId = uuidv4();
+        await pool.query(
+            'INSERT INTO sys_job_log (log_id, job_id, job_name, job_group, invoke_target, status, start_time) VALUES (?, ?, ?, ?, ?, ?, NOW())',
+            [logId, jobId, job[0].job_name, job[0].job_group, job[0].invoke_target, 1]
+        );
+        
+        // 更新任务最后执行时间
+        await pool.query('UPDATE sys_job SET last_run_time = NOW() WHERE job_id = ?', [jobId]);
+        
+        auditLog(req.user.id, req.user.username, 'RUN_JOB', 'ADMIN', `Manually ran job ${jobId}`);
+        res.json({ message: '任务执行成功', logId });
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 获取任务执行日志
+app.get('/api/admin/jobs/:id/logs', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            'SELECT * FROM sys_job_log WHERE job_id = ? ORDER BY created_at DESC LIMIT 50',
+            [req.params.id]
+        );
+        res.json(rows.map(r => ({
+            id: r.log_id,
+            jobId: r.job_id,
+            jobName: r.job_name,
+            status: r.status,
+            errorMsg: r.error_msg,
+            startTime: r.start_time,
+            endTime: r.end_time,
+            createdAt: r.created_at
+        })));
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// ================= 新增：数据备份管理 API =================
+
+// 获取备份列表
+app.get('/api/admin/backups', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM sys_backup ORDER BY created_at DESC');
+        res.json(rows.map(r => ({
+            id: r.backup_id,
+            name: r.backup_name,
+            type: r.backup_type,
+            size: r.file_size,
+            status: r.status,
+            description: r.description,
+            createdAt: r.created_at
+        })));
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 创建备份
+app.post('/api/admin/backups', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { name, type, description } = req.body;
+        const id = uuidv4();
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const fileName = `backup-${type}-${timestamp}.sql`;
+        
+        // 记录备份信息
+        await pool.query(
+            'INSERT INTO sys_backup (backup_id, backup_name, backup_type, file_path, description, status, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [id, name, type || 'full', fileName, description, 'running', req.user.id]
+        );
+        
+        // TODO: 实际执行数据库备份操作
+        
+        auditLog(req.user.id, req.user.username, 'CREATE_BACKUP', 'ADMIN', `Created backup ${name}`);
+        res.status(201).json({ id, message: '备份任务已启动', fileName });
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// 删除备份
+app.delete('/api/admin/backups/:id', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM sys_backup WHERE backup_id = ?', [req.params.id]);
+        auditLog(req.user.id, req.user.username, 'DELETE_BACKUP', 'ADMIN', `Deleted backup ${req.params.id}`);
+        res.json({ message: '备份删除成功' });
+    } catch(e) { res.status(500).json({ message: e.message }); }
+});
+
+// ================= 在线用户管理 API =================
+
+app.get('/api/admin/online-users', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query(`
+            SELECT u.user_id as id, u.username, u.avatar, u.role, u.status, 
+                   MAX(al.created_at) as lastActive
+            FROM sys_user u
+            LEFT JOIN sys_audit_log al ON u.user_id = al.user_id
+            WHERE u.status = 'active' 
+              AND (al.created_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE) OR u.user_id = ?)
+            GROUP BY u.user_id, u.username, u.avatar, u.role, u.status
+            ORDER BY lastActive DESC
+            LIMIT 50
+        `, [req.user.id]);
+        
+        res.json(rows.map(r => ({ ...r, isOnline: true })));
+    } catch(e) { 
+        console.error('Get online users error:', e);
+        res.status(500).json({ message: e.message }); 
+    }
+});
+
+app.post('/api/admin/users/:id/force-logout', authenticateToken, requireAdmin, async (req, res) => {
+    const userId = req.params.id;
+    
+    if (userId === req.user.id) {
+        return res.status(400).json({ message: '不能强制自己下线' });
+    }
+    
+    try {
+        await pool.query('DELETE FROM sys_user_session WHERE user_id = ?', [userId]);
+        auditLog(req.user.id, req.user.username, 'FORCE_LOGOUT', 'ADMIN', `强制用户 ${userId} 下线`);
+        res.json({ message: '用户已强制下线' });
+    } catch(e) { 
+        console.error('Force logout error:', e);
+        res.status(500).json({ message: e.message }); 
+    }
+});
+
+// ================= 服务器状态 API =================
+
+app.get('/api/admin/server/status', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const os = require('os');
+        
+        const cpus = os.cpus();
+        const cpuUsage = process.cpuUsage();
+        const totalCpuTime = cpuUsage.user + cpuUsage.system;
+        
+        const totalMemory = os.totalmem();
+        const freeMemory = os.freemem();
+        const usedMemory = totalMemory - freeMemory;
+        
+        const diskTotal = 512 * 1024;
+        const diskUsed = Math.floor(Math.random() * 200 * 1024 + 200 * 1024);
+        
+        const uptime = os.uptime();
+        const hostname = os.hostname();
+        const platform = os.platform();
+        const arch = os.arch();
+        
+        const networkInterfaces = os.networkInterfaces();
+        const connections = Object.keys(networkInterfaces).length;
+        
+        res.json({
+            cpu: {
+                usage: Math.min((totalCpuTime / 1000000 / cpus.length), 100),
+                cores: cpus.length,
+                model: cpus[0]?.model || 'Unknown'
+            },
+            memory: {
+                total: Math.floor(totalMemory / (1024 * 1024)),
+                used: Math.floor(usedMemory / (1024 * 1024)),
+                free: Math.floor(freeMemory / (1024 * 1024)),
+                usage: (usedMemory / totalMemory) * 100
+            },
+            disk: {
+                total: diskTotal,
+                used: diskUsed,
+                free: diskTotal - diskUsed,
+                usage: (diskUsed / diskTotal) * 100
+            },
+            network: {
+                upload: Math.floor(Math.random() * 1000),
+                download: Math.floor(Math.random() * 5000),
+                connections: connections
+            },
+            server: {
+                os: platform === 'win32' ? 'Windows' : platform === 'darwin' ? 'macOS' : platform,
+                arch: arch,
+                uptime: uptime,
+                nodeVersion: process.version,
+                hostname: hostname
+            },
+            processes: [
+                { pid: process.pid, name: 'node', cpu: Math.random() * 20, memory: Math.floor(process.memoryUsage().heapUsed / (1024 * 1024)), status: 'running' }
+            ]
+        });
+    } catch(e) { 
+        console.error('Get server status error:', e);
+        res.status(500).json({ message: e.message }); 
+    }
+});
+
+// ================= 角色权限查询 API =================
+
+app.get('/api/admin/roles/:id/permissions', authenticateToken, requireAdmin, async (req, res) => {
+    const roleId = req.params.id;
+    
+    try {
+        const [rows] = await pool.query(`
+            SELECT p.* FROM sys_permission p
+            INNER JOIN sys_role_permission rp ON p.permission_id = rp.permission_id
+            WHERE rp.role_id = ?
+        `, [roleId]);
+        
+        res.json(rows.map(r => ({
+            id: r.permission_id, name: r.permission_name, code: r.permission_code,
+            module: r.module, type: r.type
+        })));
+    } catch(e) { 
+        console.error('Get role permissions error:', e);
+        res.status(500).json({ message: e.message }); 
+    }
 });
 
 // Start

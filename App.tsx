@@ -1,19 +1,22 @@
-
 import React, { useState, useEffect, useRef } from 'react';
-import { LogEntry, ViewState, User } from './types';
+import { LogEntry, ViewState, User, LogType } from './types';
 import * as dbService from './services/dbService';
 import { LibraryView } from './components/LibraryView';
 import { DetailsView } from './components/DetailsView';
 import { EditorView } from './components/EditorView';
 import { CategoryManager } from './components/CategoryManager';
+import { NotificationCenter } from './components/NotificationCenter';
+import { OptimizedNotificationCenter } from './components/OptimizedNotificationCenter';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { AuthView } from './components/AuthView';
 import { Sidebar } from './components/Sidebar';
 import { ChatView } from './components/ChatView';
-import { AIChatView } from './components/AIChatView'; 
+import { OptimizedChatView } from './components/OptimizedChatView';
+import { AIChatView } from './components/AIChatView';
 import { ProfileView } from './components/ProfileView';
 import { SettingsView } from './components/SettingsView';
-import { AdminDashboard } from './components/admin/AdminDashboard'; 
+import { AdminLayout } from './components/admin/AdminLayout';
+import { ResponsiveNav } from './components/ResponsiveNav';
 import { Loader2 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -41,6 +44,8 @@ const App: React.FC = () => {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const [showNotificationCenter, setShowNotificationCenter] = useState(false);
+  const [currentLogTypeForCategory, setCurrentLogTypeForCategory] = useState<LogType>('comfyui');
   const [isLoading, setIsLoading] = useState(true);
   const [profileUserId, setProfileUserId] = useState<string | null>(null);
   const [profileUserData, setProfileUserData] = useState<User | null>(null);
@@ -50,9 +55,14 @@ const App: React.FC = () => {
 
   // 未读消息数量
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState<number>(0);
 
   // 聊天页面初始联系人ID
   const [chatInitialContactId, setChatInitialContactId] = useState<string | null>(null);
+
+  // 功能开关：使用优化版本组件
+  const [useOptimizedChat, setUseOptimizedChat] = useState(true);
+  const [useOptimizedNotifications, setUseOptimizedNotifications] = useState(true);
 
   // 自动刷新间隔（毫秒）
   const AUTO_REFRESH_INTERVAL = 3000; // 3秒
@@ -218,8 +228,23 @@ const App: React.FC = () => {
       setEntries(entriesWithLikeStatus);
       // 同时刷新收藏列表
       await refreshLikedEntries();
+      // 刷新未读通知数量
+      await refreshUnreadNotificationCount();
     } else {
       setEntries(data);
+    }
+  };
+
+  // 刷新未读通知数量
+  const refreshUnreadNotificationCount = async () => {
+    if (!currentUser) return;
+    try {
+      // 获取未读通知数量
+      const notifications = await dbService.getNotifications(currentUser.id);
+      const unreadCount = notifications.filter(n => !n.read).length;
+      setUnreadNotificationCount(unreadCount);
+    } catch (e) {
+      console.error('刷新未读通知数量失败:', e);
     }
   };
 
@@ -394,7 +419,7 @@ const App: React.FC = () => {
   }
 
   if (view === 'ADMIN' && currentUser.role === 'admin') {
-    return <AdminDashboard currentUser={currentUser} onExit={() => setView('SETTINGS')} />;
+    return <AdminLayout currentUser={currentUser} onExit={() => setView('SETTINGS')} />;
   }
 
   const selectedEntry = selectedEntryId ? entries.find(e => e.id === selectedEntryId) : null;
@@ -406,7 +431,8 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-full overflow-hidden">
-      <Sidebar
+      {/* 响应式导航组件 - 处理 lg/md/默认 三种断点 */}
+      <ResponsiveNav
         currentUser={currentUser}
         currentView={view}
         onChangeView={(v) => {
@@ -418,15 +444,22 @@ const App: React.FC = () => {
         }}
         onLogout={handleLogout}
         unreadChatCount={unreadChatCount}
-        onEnterChat={(friendId) => {
-          // 进入聊天页面时清空未读消息数量
-          setUnreadChatCount(0);
-          // 设置初始联系人ID（如果有）
-          setChatInitialContactId(friendId || null);
-        }}
+        unreadNotificationCount={unreadNotificationCount}
+        onOpenNotificationCenter={() => setShowNotificationCenter(true)}
       />
       
-      <main className="flex-1 min-w-0 bg-slate-50 dark:bg-slate-950 relative transition-colors">
+      {/*
+        主内容区域 - 响应式边距调整：
+        - 大屏幕 (≥1041px): 左侧留出 w-64 (256px) 空间给固定侧边栏
+        - 中等屏幕 (817px-1040px): 顶部留出 h-16 (64px) 空间给水平导航栏
+        - 小屏幕 (<817px): 顶部留出 h-14 (56px) 空间给精简导航栏
+      */}
+      <main className="
+        flex-1 min-w-0 bg-slate-50 dark:bg-slate-950 relative transition-colors
+        min-[1041px]:ml-64 min-[1041px]:mt-0
+        min-[817px]:max-[1040px]:mt-16 min-[817px]:max-[1040px]:ml-0
+        max-[816px]:mt-14 max-[816px]:ml-0
+      ">
         {view === 'LIBRARY' && (
           <LibraryView 
             entries={entries} 
@@ -436,7 +469,12 @@ const App: React.FC = () => {
             onDelete={handleDeleteEntry}
             onLikeToggle={handleLikeToggle}
             categories={categories}
-            onManageCategories={() => setShowCategoryManager(true)}
+            onManageCategories={(logType) => {
+              if (logType) {
+                setCurrentLogTypeForCategory(logType);
+              }
+              setShowCategoryManager(true);
+            }}
             onViewUser={handleViewUserProfile}
           />
         )}
@@ -466,12 +504,21 @@ const App: React.FC = () => {
         )}
 
         {view === 'CHAT' && (
-           <ChatView
-             currentUser={currentUser}
-             onViewEntry={handleSelectEntry}
-             onViewUser={handleViewUserProfile}
-             initialContactId={chatInitialContactId}
-           />
+           useOptimizedChat ? (
+             <OptimizedChatView
+               currentUser={currentUser}
+               onViewEntry={handleSelectEntry}
+               onViewUser={handleViewUserProfile}
+               initialContactId={chatInitialContactId}
+             />
+           ) : (
+             <ChatView
+               currentUser={currentUser}
+               onViewEntry={handleSelectEntry}
+               onViewUser={handleViewUserProfile}
+               initialContactId={chatInitialContactId}
+             />
+           )
         )}
 
         {view === 'AI_CHAT' && (
@@ -548,15 +595,38 @@ const App: React.FC = () => {
       </main>
 
       <ToastContainer toasts={toasts} onDismiss={handleDismissToast} />
-      
+
       {showCategoryManager && (
-        <CategoryManager 
+        <CategoryManager
+          initialType={currentLogTypeForCategory}
           onClose={async () => {
              setShowCategoryManager(false);
              setCategories(await dbService.getCategories());
              if (currentUser) refreshData();
           }}
         />
+      )}
+
+      {showNotificationCenter && currentUser && (
+        useOptimizedNotifications ? (
+          <OptimizedNotificationCenter
+            currentUser={currentUser}
+            onClose={() => {
+              setShowNotificationCenter(false);
+              // 刷新未读通知计数
+              refreshUnreadNotificationCount();
+            }}
+          />
+        ) : (
+          <NotificationCenter
+            currentUser={currentUser}
+            onClose={() => {
+              setShowNotificationCenter(false);
+              // 刷新未读通知计数
+              refreshUnreadNotificationCount();
+            }}
+          />
+        )
       )}
     </div>
   );

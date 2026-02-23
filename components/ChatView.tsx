@@ -207,7 +207,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ currentUser, onViewEntry, on
                         {friends.map(friend => (
                             <button 
                               key={friend.id}
-                              onClick={() => { setActiveContactId(friend.id); setIsMobileListOpen(false); }}
+                              onClick={async () => { 
+                                setActiveContactId(friend.id); 
+                                setIsMobileListOpen(false); 
+                                // 标记该好友的消息为已读
+                                try {
+                                  await dbService.markMessagesAsRead(friend.id);
+                                } catch (e) {
+                                  console.error('标记消息已读失败:', e);
+                                }
+                              }}
                               className={`w-full flex items-center gap-3 p-2 rounded-lg transition-all ${
                                   activeContactId === friend.id 
                                   ? 'bg-primary-500 text-white shadow-md shadow-primary-500/20' 

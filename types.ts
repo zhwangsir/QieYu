@@ -1,23 +1,15 @@
-
-// AI 绘图资源类型
 export type AIResourceType = 'Checkpoint' | 'Lora' | 'Embedding' | 'VAE' | 'ControlNet' | 'Other';
 
-// 3D建模资源类型
 export type ModelingResourceType = 'Blender插件' | '材质预设' | '模型资产' | '渲染引擎' | '脚本工具' | '其他';
 
-// 视频剪辑资源类型
 export type EditingResourceType = 'PR插件' | 'AE插件' | '转场预设' | '调色LUT' | '音效库' | '字体' | '其他';
 
-// 通用资源类型
 export type GeneralResourceType = '工具' | '插件' | '素材' | '参考' | '其他';
 
-// 所有资源类型的联合类型
 export type ResourceType = AIResourceType | ModelingResourceType | EditingResourceType | GeneralResourceType;
 
-// Defined Log Types
 export type LogType = 'comfyui' | 'midjourney' | 'fooocus' | 'webui' | 'coding' | 'modeling' | 'editing' | 'general' | 'life' | 'gaming';
 
-// Difficulty level for learning tasks
 export type DifficultyLevel = 'beginner' | 'easy' | 'medium' | 'hard' | 'expert';
 
 export interface User {
@@ -26,16 +18,14 @@ export interface User {
   password?: string;
   avatar: string;
   bio?: string;
-  coverImage?: string; // 个人主页背景图
+  coverImage?: string;
   createdAt: string;
-  role?: 'user' | 'admin' | 'editor'; // Expanded roles
+  role?: 'user' | 'admin' | 'editor';
   status?: 'active' | 'banned';
-  
-  // Social & Customization
-  friends?: string[]; 
-  theme?: string; 
-  themeMode?: 'light' | 'dark'; 
-  chatBackground?: string; 
+  friends?: string[];
+  theme?: string;
+  themeMode?: 'light' | 'dark';
+  chatBackground?: string;
 }
 
 export interface FriendRequest {
@@ -52,7 +42,7 @@ export interface Notification {
   type: 'friend_request' | 'system' | 'friend_accept';
   title: string;
   content: string;
-  data?: any; // Related ID etc
+  data?: any;
   read: boolean;
   createdAt: string;
 }
@@ -61,10 +51,10 @@ export interface SystemLog {
   id: string;
   userId: string;
   username: string;
-  action: string; 
-  module: string; // e.g., 'AUTH', 'USER', 'CONTENT'
+  action: string;
+  module: string;
   details: string;
-  ip: string; 
+  ip: string;
   status: 'success' | 'fail';
   createdAt: string;
 }
@@ -92,26 +82,22 @@ export interface AIResource {
   id: string;
   name: string;
   type: ResourceType;
-  weight?: number; 
+  weight?: number;
 }
 
 export interface LogEntry {
   id: string;
-  userId: string; 
-  authorName?: string; 
-  authorAvatar?: string; 
-  logType: LogType; 
+  userId: string;
+  authorName?: string;
+  authorAvatar?: string;
+  logType: LogType;
   title: string;
-  category: string; 
-  createdAt: string; 
+  category: string;
+  createdAt: string;
   updatedAt: string;
-  isPublic: boolean; 
-  
-  // Media
-  imageUrl: string; 
+  isPublic: boolean;
+  imageUrl: string;
   mediaType: 'image' | 'video';
-  
-  // ComfyUI / AI Specific
   positivePrompt: string;
   negativePrompt: string;
   resources: AIResource[];
@@ -120,21 +106,13 @@ export interface LogEntry {
   sampler?: string;
   scheduler?: string;
   seed?: number | string;
-  
-  // General
   notes: string;
   tags: string[];
-
-  // Coding Specific
   codeSnippet?: string;
   techStack?: string[];
-
-  // Learning & Gaming Progress
   difficulty?: DifficultyLevel;
-  progress?: number; // 0-100
-  rating?: number; // 1-10
-
-  // Social
+  progress?: number;
+  rating?: number;
   likeCount?: number;
   isLiked?: boolean;
 }
@@ -144,10 +122,10 @@ export interface ChatMessage {
   userId: string;
   username: string;
   userAvatar: string;
-  recipientId?: string; 
-  content: string; 
+  recipientId?: string;
+  content: string;
   type: 'text' | 'image' | 'video' | 'audio' | 'entry_share';
-  relatedEntryId?: string; 
+  relatedEntryId?: string;
   createdAt: string;
 }
 

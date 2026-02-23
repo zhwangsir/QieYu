@@ -242,19 +242,17 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           {/* Subtle Grid Overlay - 极淡的网格不影响背景 */}
           <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:60px_60px]" />
 
-          {/* Edit Cover Button - 半透明背景 */}
+          {/* Edit Cover Button - 右上角小按钮 */}
           {isEditing && isOwnProfile && (
-            <label className="absolute inset-0 flex items-center justify-center bg-black/30 cursor-pointer opacity-0 group-hover:opacity-100 transition-all z-20">
+            <label className="absolute top-4 right-4 p-3 bg-black/50 hover:bg-black/70 backdrop-blur-md rounded-xl cursor-pointer transition-all z-20 flex items-center gap-2 text-white shadow-lg border border-white/20">
               <input
                 type="file"
                 accept="image/*"
                 className="hidden"
                 onChange={(e) => handleFileChange(e, 'cover')}
               />
-              <div className="flex flex-col items-center gap-2 text-white">
-                <ImagePlus size={32} className="drop-shadow-lg" />
-                <span className="text-sm font-bold drop-shadow-md">更换背景图</span>
-              </div>
+              <ImagePlus size={18} />
+              <span className="text-sm font-medium">更换背景</span>
             </label>
           )}
 
